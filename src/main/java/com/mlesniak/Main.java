@@ -2,6 +2,7 @@ package com.mlesniak;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.invoke.TypeDescriptor;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -9,9 +10,15 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 record Request(URI target, String header) {
+
+}
+
+record Response(HttpClient.Version version, int status, Map<String, List<String>> headers, InputStream body) {
 
 }
 
@@ -31,12 +38,14 @@ public class Main {
         var os = client.getOutputStream();
 
         var metadata = readMetadata(is);
-        var target = determineTarget(metadata);
-        // @mlesniak pass rest of the payload.
-        var targetIs = connect(target);
-        int b;
+        var request = determineTarget(metadata);
+
+        var response = processRequest(request);
+
         os.write("HTTP/1.1 200 OK\n\n".getBytes(StandardCharsets.UTF_8));
-        while ((b = targetIs.read()) != -1) {
+        int b;
+        // @mlesniak we need to close the body.
+        while ((b = response.body().read()) != -1) {
             os.write(b);
         }
 
@@ -44,9 +53,11 @@ public class Main {
         // }
     }
 
-    private static InputStream connect(Request target) throws IOException, InterruptedException {
+    private static Response processRequest(Request target) throws IOException, InterruptedException {
         try (var client = HttpClient.newBuilder().build()) {
             var request = HttpRequest.newBuilder(target.target());
+
+            // @mlesniak improve code quality
             var headers = target.header().split("\r\n");
             for (String header : headers) {
                 System.out.println(header);
@@ -57,10 +68,14 @@ public class Main {
                 request.header(ps[0].substring(0, ps[0].length() - 1), ps[1]);
             }
             var r = request.build();
+
             var is = client.send(r, HttpResponse.BodyHandlers.ofInputStream());
-            // @mlesniak pass complete response (headers, status code and payload)
-            System.out.println(is.headers().toString());
-            return is.body();
+            return new Response(
+                    is.version(),
+                    is.statusCode(),
+                    is.headers().map(),
+                    is.body()
+            );
         }
     }
 
