@@ -1,9 +1,7 @@
 package com.mlesniak;
 
-import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -13,39 +11,40 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.stream.Collectors;
 
-record Target(URI target, String header) {
+record Request(URI target, String header) {
 
 }
 
 // https://codingchallenges.substack.com/p/coding-challenge-51-http-forward
 // curl --proxy "http://localhost:8989" "http://httpbin.org/ip"
 public class Main {
-    public static void main(String[] args) throws IOException, InterruptedException {
+    public static void main(String... args) throws IOException, InterruptedException {
         var port = 8989;
         var socket = new ServerSocket(port);
         System.out.printf("Listening on port %d%n", port);
 
-        while (true) {
-            System.out.println("Waiting for connection");
-            var client = socket.accept();
-            System.out.printf("Client connected: %s%n", client.getInetAddress().getHostAddress());
-            var is = client.getInputStream();
-            var os = client.getOutputStream();
+        // while (true) {
+        System.out.println("Waiting for connection");
+        var client = socket.accept();
+        System.out.printf("Client connected: %s%n", client.getInetAddress().getHostAddress());
+        var is = client.getInputStream();
+        var os = client.getOutputStream();
 
-            var metadata = readMetadata(is);
-            var target = determineTarget(metadata);
-            var targetIs = connect(target);
-            int b;
-            os.write("HTTP/1.1 200 OK\n\n".getBytes(StandardCharsets.UTF_8));
-            while ((b = targetIs.read()) != -1) {
-                os.write(b);
-            }
-
-            client.close();
+        var metadata = readMetadata(is);
+        var target = determineTarget(metadata);
+        // @mlesniak pass rest of the payload.
+        var targetIs = connect(target);
+        int b;
+        os.write("HTTP/1.1 200 OK\n\n".getBytes(StandardCharsets.UTF_8));
+        while ((b = targetIs.read()) != -1) {
+            os.write(b);
         }
+
+        client.close();
+        // }
     }
 
-    private static InputStream connect(Target target) throws IOException, InterruptedException {
+    private static InputStream connect(Request target) throws IOException, InterruptedException {
         try (var client = HttpClient.newBuilder().build()) {
             var request = HttpRequest.newBuilder(target.target());
             var headers = target.header().split("\r\n");
@@ -59,14 +58,13 @@ public class Main {
             }
             var r = request.build();
             var is = client.send(r, HttpResponse.BodyHandlers.ofInputStream());
-            // @mlesniak error handling in case of non200?
-            // @mlesniak this is not the raw response.
+            // @mlesniak pass complete response (headers, status code and payload)
             System.out.println(is.headers().toString());
             return is.body();
         }
     }
 
-    private static Target determineTarget(String metadata) {
+    private static Request determineTarget(String metadata) {
         var lines = metadata.split("\r\n");
         if (lines.length < 1) {
             throw new IllegalArgumentException("No HTTP header found");
@@ -80,7 +78,7 @@ public class Main {
         var headers = Arrays.asList(lines).subList(1, lines.length - 1)
                 .stream().map(l -> l + "\r\n")
                 .collect(Collectors.joining());
-        return new Target(URI.create(lineParts[1]), headers);
+        return new Request(URI.create(lineParts[1]), headers);
     }
 
     private static String readMetadata(InputStream is) throws IOException {
