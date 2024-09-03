@@ -2,8 +2,9 @@ package com.mlesniak;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.invoke.TypeDescriptor;
+import java.io.OutputStream;
 import java.net.ServerSocket;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -19,38 +20,68 @@ record Request(URI target, String header) {
 }
 
 record Response(HttpClient.Version version, int status, Map<String, List<String>> headers, InputStream body) {
-
+    public byte[] getStatusLine() {
+        var version = switch (this.version) {
+            case HTTP_1_1 -> "HTTP/1.1";
+            case HTTP_2 -> "HTTP/2.0";
+        };
+        // The third parameter, explaining the status code is
+        // actually optional and thus omitted.
+        return String.format("%s %d\n\n", version, status).getBytes(StandardCharsets.US_ASCII);
+    }
 }
 
 // https://codingchallenges.substack.com/p/coding-challenge-51-http-forward
 // curl --proxy "http://localhost:8989" "http://httpbin.org/ip"
+// @mlesniak basic logging
 public class Main {
     public static void main(String... args) throws IOException, InterruptedException {
         var port = 8989;
+        startServer(port);
+    }
+
+    // @mlesniak  how to handle waiting indefinitely while allowing unit test curl calls?
+    private static void startServer(int port) throws IOException, InterruptedException {
         var socket = new ServerSocket(port);
-        System.out.printf("Listening on port %d%n", port);
+        System.out.printf("Start to listen on port %d%n", port);
 
         // while (true) {
-        System.out.println("Waiting for connection");
         var client = socket.accept();
+        processClient(client);
+        // }
+    }
+
+    private static void processClient(Socket client) {
         System.out.printf("Client connected: %s%n", client.getInetAddress().getHostAddress());
-        var is = client.getInputStream();
-        var os = client.getOutputStream();
 
-        var metadata = readMetadata(is);
-        var request = determineTarget(metadata);
+        // @mlesniak error handling.
+        try {
+            var is = client.getInputStream();
+            var os = client.getOutputStream();
+            // @mlesniak combine to request
+            var metadata = readMetadata(is);
+            var request = determineTarget(metadata);
 
-        var response = processRequest(request);
+            var response = processRequest(request);
+            os.write(response.getStatusLine());
+            copy(response.body(), os);
 
-        os.write("HTTP/1.1 200 OK\n\n".getBytes(StandardCharsets.UTF_8));
+            is.close();
+            os.close();
+            client.close();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void copy(InputStream is, OutputStream os) throws IOException {
         int b;
-        // @mlesniak we need to close the body.
-        while ((b = response.body().read()) != -1) {
+        while ((b = is.read()) != -1) {
             os.write(b);
         }
-
-        client.close();
-        // }
+        is.close();
     }
 
     private static Response processRequest(Request target) throws IOException, InterruptedException {
@@ -58,6 +89,7 @@ public class Main {
             var request = HttpRequest.newBuilder(target.target());
 
             // @mlesniak improve code quality
+            // @mlesniak remove proxy connection
             var headers = target.header().split("\r\n");
             for (String header : headers) {
                 System.out.println(header);
