@@ -89,7 +89,7 @@ public class Main {
             var request = HttpRequest.newBuilder(target.target());
 
             // @mlesniak improve code quality
-            // @mlesniak remove proxy connection
+            // @mlesniak remove proxy header
             var headers = target.header().split("\r\n");
             for (String header : headers) {
                 System.out.println(header);
