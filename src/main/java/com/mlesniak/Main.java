@@ -8,23 +8,8 @@ import java.net.Socket;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
-
-record Response(HttpClient.Version version, int status, Map<String, List<String>> headers, InputStream body) {
-    public byte[] getStatusLine() {
-        var version = switch (this.version) {
-            case HTTP_1_1 -> "HTTP/1.1";
-            case HTTP_2 -> "HTTP/2.0";
-        };
-        // The third parameter, explaining the status code
-        // is actually optional and thus omitted.
-        return String.format("%s %d\n\n", version, status).getBytes(StandardCharsets.US_ASCII);
-    }
-}
 
 // https://codingchallenges.substack.com/p/coding-challenge-51-http-forward
 // curl --proxy "http://localhost:8989" "http://httpbin.org/ip"
@@ -43,29 +28,22 @@ public class Main {
         System.out.printf("Start to listen on port %d%n", port);
 
         // while (true) {
-        var client = socket.accept();
-        processClient(client);
+        try (var client = socket.accept()) {
+            processClient(client);
+        }
         // }
     }
 
     private static void processClient(Socket client) {
         System.out.printf("Client connected: %s%n", client.getInetAddress().getHostAddress());
 
-        try {
-            var is = client.getInputStream();
-            var os = client.getOutputStream();
-
-            Request request = Request.from(is);
-
-            var response = processRequest(request);
-            os.write(response.getStatusLine());
-            copy(response.body(), os);
-
-            is.close();
-            os.close();
-            client.close();
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+        try (var is = client.getInputStream()) {
+            try (var os = client.getOutputStream()) {
+                Request request = Request.from(is);
+                var response = processRequest(request);
+                os.write(response.getStatusLine());
+                copy(response.body(), os);
+            }
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -79,7 +57,7 @@ public class Main {
         is.close();
     }
 
-    private static Response processRequest(Request request) throws IOException, InterruptedException {
+    private static Response processRequest(Request request) throws IOException {
         try (var client = HttpClient.newBuilder().build()) {
             var clientRequest = HttpRequest.newBuilder(request.target());
             // For the time being, we ignore multivalued headers, i.e. headers
@@ -92,6 +70,8 @@ public class Main {
 
             var body = client.send(clientRequest.build(), HttpResponse.BodyHandlers.ofInputStream());
             return new Response(body.version(), body.statusCode(), body.headers().map(), body.body());
+        } catch (InterruptedException e) {
+            throw new IOException("Connection interrupted", e);
         }
     }
 }
