@@ -1,12 +1,8 @@
 package com.mlesniak;
 
-import jdk.jshell.spi.ExecutionControl;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.http.HttpClient;
@@ -15,8 +11,9 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.UUID;
-import java.util.function.Supplier;
-import java.util.function.ToDoubleBiFunction;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 public class ProxyServer {
@@ -35,20 +32,39 @@ public class ProxyServer {
         try (var socket = new ServerSocket(port)) {
             Log.info("Start to listen on port {}", port);
 
-            do {
-                var client = socket.accept();
-
-                // @mlesniak Use virtual threads.
-                new Thread(() -> {
+            // @mlesniak Use virtual threads.
+            var serverExec = Executors.newSingleThreadExecutor();
+            var clientExecs = Executors.newFixedThreadPool(16);
+            serverExec.submit(() -> {
+                do {
                     try {
-                        Log.add("id", UUID.randomUUID().toString().split("-")[0]);
-                        processClient(client);
-                    } finally {
-                        IOUtils.close(client);
-                        Log.clear();
+                        Socket client = socket.accept();
+                        clientExecs.submit(() -> {
+                            try {
+                                // Unique client id -- using the first characters of an
+                                // uuid is sufficient and does not pollute the log output
+                                // as much.
+                                String clientId = UUID.randomUUID().toString().split("-")[0];
+                                Log.add("id", clientId);
+                                handle(client);
+                            } finally {
+                                IOUtils.closeQuietly(client);
+                                Log.clear();
+                            }
+                        });
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
                     }
-                }).start();
-            } while (run);
+                } while (run);
+
+                clientExecs.shutdown();
+                serverExec.shutdown();
+            });
+            try {
+                serverExec.awaitTermination(1, TimeUnit.MINUTES);
+            } catch (InterruptedException e) {
+                Log.info("Error while waiting for shutdown", e);
+            }
         }
     }
 
@@ -57,7 +73,7 @@ public class ProxyServer {
         run = false;
     }
 
-    public static void processClient(Socket client) {
+    public static void handle(Socket client) {
         var clientIp = client.getInetAddress().getHostAddress();
         Log.info("Client connected: {}", clientIp);
 
@@ -99,7 +115,7 @@ public class ProxyServer {
             request.outputStream().write("HTTP/1.1 200 OK\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
 
             // let's see what we receive then...
-            var t1 =new Thread(() -> {
+            var t1 = new Thread(() -> {
                 int b;
                 Log.info("Sending data");
                 try {
