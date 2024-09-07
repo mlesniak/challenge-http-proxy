@@ -13,7 +13,10 @@ import java.util.UUID;
 import java.util.stream.Stream;
 
 public class ProxyServer {
-    private static final Set<String> IGNORED_HEADERS = Set.of("host");
+    private static final Set<String> IGNORED_HEADERS = Set.of(
+            "host",
+            "proxy-connection"
+    );
     private final int port;
     private boolean run = true;
 
@@ -48,12 +51,13 @@ public class ProxyServer {
     }
 
     public static void processClient(Socket client) {
-        Log.info("Client connected: {}", client.getInetAddress().getHostAddress());
+        var clientIp = client.getInetAddress().getHostAddress();
+        Log.info("Client connected: {}", clientIp);
 
         try (var is = client.getInputStream()) {
             try (var os = client.getOutputStream()) {
                 Request request = Request.from(is);
-                var response = processRequest(request);
+                var response = processRequest(clientIp, request);
                 os.write(response.getStatusLine());
                 copy(response.body(), os);
             }
@@ -72,16 +76,17 @@ public class ProxyServer {
         is.close();
     }
 
-    private static Response processRequest(Request request) throws IOException {
+    private static Response processRequest(String clientIp, Request request) throws IOException {
         try (var client = HttpClient.newBuilder().build()) {
             var clientRequest = HttpRequest.newBuilder(request.target());
             // For the time being, we ignore multivalued headers, i.e. headers
-            // with the same name and multiple occurrences.
-            // @mlesniak pass X-Forwarded-For value
-            // @mlesniak ignore proxy header value
-            var headers = request.headers().entrySet().stream()
-                    .filter(es -> !IGNORED_HEADERS.contains(es.getKey().toLowerCase()))
-                    .flatMap(es -> Stream.of(es.getKey(), es.getValue().getFirst()))
+            // with the same name and multiple occurrences. As long as we are
+            // able to serve requests from Chrome, I am happy.
+            String[] headers = Stream.concat(
+                            request.headers().entrySet().stream()
+                                    .filter(es -> !IGNORED_HEADERS.contains(es.getKey().toLowerCase()))
+                                    .flatMap(es -> Stream.of(es.getKey(), es.getValue().getFirst())),
+                            Stream.of("X-Forwarded-For", clientIp))
                     .toArray(String[]::new);
             clientRequest.headers(headers);
 
