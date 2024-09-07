@@ -9,43 +9,26 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-// @mlesniak refactor this, it's not about request and response anymore.
-record Request(String method, URI target, Map<String, List<String>> headers, InputStream body, OutputStream outputStream) {
-    public boolean isSSL() {
-        return method.equalsIgnoreCase("connect");
+import static com.mlesniak.Request.Type.HTTP;
+import static com.mlesniak.Request.Type.HTTPS;
+
+record Request(String method, URI target, Map<String, List<String>> headers, InputStream body, OutputStream response) {
+    public enum Type {
+        HTTP,
+        HTTPS
     }
 
-    public static Request from(InputStream is, OutputStream os) throws IOException {
+    public Type type() {
+        if (method.equalsIgnoreCase("connect")) {
+            return HTTPS;
+        }
+
+        return HTTP;
+    }
+
+    public static Request from(InputStream is, OutputStream to) throws IOException {
         var preamble = readPreamble(is);
-        return parse(preamble, is, os);
-    }
-
-    private static Request parse(String preamble, InputStream is, OutputStream os) {
-        var lines = preamble.split("\r\n");
-        if (lines.length < 1) {
-            throw new IllegalArgumentException("No HTTP header found");
-        }
-        var lineParts = lines[0].split(" ");
-        if (lineParts.length < 3) {
-            throw new IllegalArgumentException("Invalid HTTP header:" + lines[0]);
-        }
-        var method = lineParts[0];
-        var target = lineParts[1];
-        // For now, we ignore the http version.
-
-        Map<String, List<String>> headers = Arrays
-                .asList(lines)
-                .subList(1, lines.length - 1)
-                .stream()
-                .map(l -> l.split(":"))
-                .map(ps -> {
-                    if (ps.length < 2) {
-                        throw new IllegalArgumentException("Illegal header: " + Arrays.asList(ps));
-                    }
-                    return Map.entry(ps[0], List.of(ps[1]));
-                })
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-        return new Request(method, URI.create(target), headers, is, os);
+        return parse(preamble, is, to);
     }
 
     /**
@@ -71,5 +54,33 @@ record Request(String method, URI target, Map<String, List<String>> headers, Inp
             sb.append((char) b);
         }
         return sb.toString();
+    }
+
+    private static Request parse(String preamble, InputStream is, OutputStream to) {
+        var lines = preamble.split("\r\n");
+        if (lines.length < 1) {
+            throw new IllegalArgumentException("No HTTP header found");
+        }
+        var lineParts = lines[0].split(" ");
+        if (lineParts.length < 3) {
+            throw new IllegalArgumentException("Invalid HTTP header:" + lines[0]);
+        }
+        var method = lineParts[0];
+        var target = lineParts[1];
+        // For now, we ignore the http version.
+
+        Map<String, List<String>> headers = Arrays
+                .asList(lines)
+                .subList(1, lines.length - 1)
+                .stream()
+                .map(l -> l.split(":"))
+                .map(ps -> {
+                    if (ps.length < 2) {
+                        throw new IllegalArgumentException("Illegal header: " + Arrays.asList(ps));
+                    }
+                    return Map.entry(ps[0], List.of(ps[1]));
+                })
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        return new Request(method, URI.create(target), headers, is, to);
     }
 }

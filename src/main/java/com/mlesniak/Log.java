@@ -6,7 +6,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 public final class Log {
-    public static ThreadLocal<SimpleDateFormat> sdf = ThreadLocal.withInitial(() -> new SimpleDateFormat("yyyy-MM-dd HH:mm:ss"));
+    public static ThreadLocal<SimpleDateFormat> sdf = ThreadLocal.withInitial(() -> new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS"));
     private static final ThreadLocal<Map<String, Object>> mdc = ThreadLocal.withInitial(HashMap::new);
 
     private Log() {
