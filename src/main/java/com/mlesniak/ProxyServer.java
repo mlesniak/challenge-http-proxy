@@ -5,14 +5,18 @@ import jdk.jshell.spi.ExecutionControl;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.function.ToDoubleBiFunction;
 import java.util.stream.Stream;
 
 public class ProxyServer {
@@ -59,10 +63,13 @@ public class ProxyServer {
 
         try (var is = client.getInputStream()) {
             try (var os = client.getOutputStream()) {
-                Request request = Request.from(is);
+                Request request = Request.from(is, os);
                 var response = processRequest(clientIp, request);
-                os.write(response.getStatusLine());
-                copy(response.body(), os);
+                if (response != null) {
+                    // @mlesniak better TLD handling.
+                    os.write(response.getStatusLine());
+                    copy(response.body(), os);
+                }
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -81,7 +88,51 @@ public class ProxyServer {
 
     private static Response processRequest(String clientIp, Request request) throws IOException {
         if (request.isSSL()) {
-            throw new IllegalStateException("not supported yet");
+            Log.info("Request {}", request);
+
+            // Create a binary tunnel to the target and dispatch everything.
+            var server = request.target().getScheme();
+            var port = Integer.parseInt(request.target().getSchemeSpecificPart());
+            var sock = new Socket(server, port);
+
+            // Send back 200, and then simply print out everything we receive
+            request.outputStream().write("HTTP/1.1 200 OK\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+
+            // let's see what we receive then...
+            var t1 =new Thread(() -> {
+                int b;
+                Log.info("Sending data");
+                try {
+                    while ((b = request.body().read()) != -1) {
+                        sock.getOutputStream().write(b);
+                    }
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            t1.start();
+            var t2 = new Thread(() -> {
+                int b;
+                Log.info("Receiving data");
+                try {
+                    while ((b = sock.getInputStream().read()) != -1) {
+                        request.outputStream().write(b);
+                    }
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            t2.start();
+
+            Log.info("Finished SSL");
+            try {
+                // @mlesniak this is bad, but we redesign anyway...
+                t1.join();
+                t2.interrupt();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            return null;
         }
 
         try (var client = HttpClient.newBuilder().build()) {

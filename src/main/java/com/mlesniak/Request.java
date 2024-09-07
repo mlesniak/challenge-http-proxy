@@ -2,23 +2,25 @@ package com.mlesniak;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-record Request(String method, URI target, Map<String, List<String>> headers, InputStream body) {
+// @mlesniak refactor this, it's not about request and response anymore.
+record Request(String method, URI target, Map<String, List<String>> headers, InputStream body, OutputStream outputStream) {
     public boolean isSSL() {
-        return target.getRawSchemeSpecificPart().equals("https");
+        return method.equalsIgnoreCase("connect");
     }
 
-    public static Request from(InputStream is) throws IOException {
+    public static Request from(InputStream is, OutputStream os) throws IOException {
         var preamble = readPreamble(is);
-        return parse(preamble, is);
+        return parse(preamble, is, os);
     }
 
-    private static Request parse(String preamble, InputStream is) {
+    private static Request parse(String preamble, InputStream is, OutputStream os) {
         var lines = preamble.split("\r\n");
         if (lines.length < 1) {
             throw new IllegalArgumentException("No HTTP header found");
@@ -43,7 +45,7 @@ record Request(String method, URI target, Map<String, List<String>> headers, Inp
                     return Map.entry(ps[0], List.of(ps[1]));
                 })
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-        return new Request(method, URI.create(target), headers, is);
+        return new Request(method, URI.create(target), headers, is, os);
     }
 
     /**
