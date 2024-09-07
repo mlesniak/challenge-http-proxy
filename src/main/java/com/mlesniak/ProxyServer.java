@@ -1,5 +1,7 @@
 package com.mlesniak;
 
+import jdk.jshell.spi.ExecutionControl;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -10,6 +12,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 public class ProxyServer {
@@ -77,6 +80,10 @@ public class ProxyServer {
     }
 
     private static Response processRequest(String clientIp, Request request) throws IOException {
+        if (request.isSSL()) {
+            throw new IllegalStateException("not supported yet");
+        }
+
         try (var client = HttpClient.newBuilder().build()) {
             var clientRequest = HttpRequest.newBuilder(request.target());
             // For the time being, we ignore multivalued headers, i.e. headers
@@ -89,6 +96,10 @@ public class ProxyServer {
                             Stream.of("X-Forwarded-For", clientIp))
                     .toArray(String[]::new);
             clientRequest.headers(headers);
+            var requestBody = request.method().equalsIgnoreCase("get") ?
+                    HttpRequest.BodyPublishers.noBody() :
+                    HttpRequest.BodyPublishers.ofInputStream(request::body);
+            clientRequest.method(request.method(), requestBody);
 
             var body = client.send(clientRequest.build(), HttpResponse.BodyHandlers.ofInputStream());
             return new Response(body.version(), body.statusCode(), body.headers().map(), body.body());
