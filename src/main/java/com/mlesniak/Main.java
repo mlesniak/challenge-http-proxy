@@ -13,7 +13,6 @@ import java.util.stream.Stream;
 
 // https://codingchallenges.substack.com/p/coding-challenge-51-http-forward
 // curl --proxy "http://localhost:8989" "http://httpbin.org/ip"
-// @mlesniak basic logging
 public class Main {
     private static final Set<String> IGNORED_HEADERS = Set.of("host");
 
@@ -25,7 +24,7 @@ public class Main {
     // @mlesniak  how to handle waiting indefinitely while allowing unit test curl calls?
     private static void startServer(int port) throws IOException, InterruptedException {
         var socket = new ServerSocket(port);
-        System.out.printf("Start to listen on port %d%n", port);
+        Log.info("Start to listen on port {}", port);
 
         // while (true) {
         try (var client = socket.accept()) {
@@ -35,7 +34,7 @@ public class Main {
     }
 
     private static void processClient(Socket client) {
-        System.out.printf("Client connected: %s%n", client.getInetAddress().getHostAddress());
+        Log.info("Client connected: {}", client.getInetAddress().getHostAddress());
 
         try (var is = client.getInputStream()) {
             try (var os = client.getOutputStream()) {
