@@ -7,7 +7,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 record Request(URI target, Map<String, List<String>> headers) {
     public static Request from(InputStream is) throws IOException {
@@ -52,7 +51,9 @@ record Request(URI target, Map<String, List<String>> headers) {
         while ((b = is.read()) != -1) {
             buf[i++ % 4] = b;
             // Newline followed by an empty line marks beginning of the body.
-            if (buf[0] == '\r' && buf[1] == '\n' && buf[2] == '\r' && buf[3] == '\n') {
+            // Note that the buffer is filled from left to right, hence the
+            // order of the last four bytes is reversed.
+            if (buf[0] == '\n' && buf[1] == '\r' && buf[2] == '\n' && buf[3] == '\r') {
                 break;
             }
             sb.append((char) b);
