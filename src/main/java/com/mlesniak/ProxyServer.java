@@ -11,6 +11,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 public class ProxyServer {
@@ -25,45 +26,33 @@ public class ProxyServer {
         this.port = port;
     }
 
+    // @mlesniak Use virtual threads.
+    // @mlesniak still not clear, when a connection is finished and can be dropped.
     public void start() throws IOException {
         try (var socket = new ServerSocket(port)) {
             Log.info("Start to listen on port {}", port);
-
-            // @mlesniak Use virtual threads.
-            var serverExec = Executors.newSingleThreadExecutor();
             var clientExecs = Executors.newFixedThreadPool(128);
-
-
-            serverExec.submit(() -> {
-                do {
-                    try {
-                        Socket client = socket.accept();
-                        clientExecs.submit(() -> {
-                            try {
-                                // Unique client id -- using the first characters of an
-                                // uuid is sufficient and does not pollute the log output
-                                // as much.
-                                String clientId = UUID.randomUUID().toString().split("-")[0];
-                                Log.add("id", clientId);
-                                handle(client);
-                            } finally {
-                                IOUtils.closeQuietly(client);
-                                Log.clear();
-                            }
-                        });
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-                } while (run);
-
-                clientExecs.shutdown();
-                serverExec.shutdown();
-            });
-            try {
-                serverExec.awaitTermination(1, TimeUnit.MINUTES);
-            } catch (InterruptedException e) {
-                Log.info("Error while waiting for shutdown", e);
-            }
+            do {
+                try {
+                    Socket client = socket.accept();
+                    clientExecs.submit(() -> {
+                        try {
+                            // Unique client id -- using the first characters of an
+                            // uuid is sufficient for our toy proxy and does not
+                            // pollute the log output as much.
+                            String clientId = UUID.randomUUID().toString().split("-")[0];
+                            Log.add("id", clientId);
+                            handle(client);
+                        } finally {
+                            IOUtils.closeQuietly(client);
+                            Log.clear();
+                        }
+                    });
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            } while (run);
+            clientExecs.shutdown();
         }
     }
 
@@ -80,7 +69,7 @@ public class ProxyServer {
             Request request = Request.from(is, os);
             switch (request.type()) {
                 case HTTP -> handleUnencryptedRequest(clientIp, request);
-                case HTTPS -> processTunnel(request);
+                case HTTPS -> handleTunnel(request);
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -115,9 +104,9 @@ public class ProxyServer {
         }
     }
 
-    private static void processTunnel(Request request) throws IOException {
+    private static void handleTunnel(Request request) throws IOException {
         Log.info("Request {}", request);
-        // Create a binary tunnel to the target and let the client handle everything else.
+        // Create a bidirectional tunnel to the target and let the client handle everything else.
         var server = request.target().getScheme();
         var port = Integer.parseInt(request.target().getSchemeSpecificPart());
         var sock = new Socket(server, port);
@@ -128,10 +117,11 @@ public class ProxyServer {
         var receiver = new Thread(() -> {
             int b;
             try {
-                while (!Thread.currentThread().isInterrupted() && (b = sock.getInputStream().read()) != -1) {
-                    if (!Thread.currentThread().isInterrupted()) {
-                        request.response().write(b);
+                while ((b = sock.getInputStream().read()) != -1) {
+                    if (Thread.currentThread().isInterrupted()) {
+                        break;
                     }
+                    request.response().write(b);
                 }
             } catch (IOException e) {
                 // This is ok-ish, sometimes the socket closes too fast.
@@ -148,7 +138,8 @@ public class ProxyServer {
                 }
                 receiver.interrupt();
             } catch (IOException e) {
-                throw new RuntimeException(e);
+                // This is ok-ish, sometimes the socket closes too fast.
+                // While not perfect, good enough for now.
             }
         });
         sender.start();
