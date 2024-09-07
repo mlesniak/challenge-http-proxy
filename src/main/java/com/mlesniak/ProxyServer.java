@@ -9,6 +9,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Stream;
 
 public class ProxyServer {
@@ -25,10 +26,18 @@ public class ProxyServer {
             Log.info("Start to listen on port {}", port);
 
             do {
+                var client = socket.accept();
+
                 // @mlesniak Use virtual threads.
-                try (var client = socket.accept()) {
-                    processClient(client);
-                }
+                new Thread(() -> {
+                    try {
+                        Log.add("id", UUID.randomUUID().toString().split("-")[0]);
+                        processClient(client);
+                    } finally {
+                        IOUtils.close(client);
+                        Log.clear();
+                    }
+                }).start();
             } while (run);
         }
     }
@@ -38,7 +47,7 @@ public class ProxyServer {
         run = false;
     }
 
-    private static void processClient(Socket client) {
+    public static void processClient(Socket client) {
         Log.info("Client connected: {}", client.getInetAddress().getHostAddress());
 
         try (var is = client.getInputStream()) {
@@ -50,6 +59,8 @@ public class ProxyServer {
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
+        } finally {
+            Log.info("Finished processing");
         }
     }
 
