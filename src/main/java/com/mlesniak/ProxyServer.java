@@ -164,12 +164,10 @@ public class ProxyServer {
             timer.scheduleAtFixedRate(() -> {
                 Log.add(mdc);
                 if (!keepAlive.get()) {
-                    // By closing the socket and request input stream,
-                    // we unblock stuck read operations, and we can
-                    // continue.
-                    IOUtils.closeQuietly(sock);
+                    // By closing the input stream, we stop
+                    // the reading thread, and thus the join()
+                    // below will succeed.
                     IOUtils.closeQuietly(request.body());
-                    timer.shutdownNow();
                 }
                 keepAlive.set(false);
             }, 5, 5, TimeUnit.SECONDS);
@@ -179,6 +177,11 @@ public class ProxyServer {
 
             try {
                 sender.join();
+                // By closing the socket and request input stream,
+                // we unblock stuck read operations, and we can
+                // continue.
+                IOUtils.closeQuietly(sock);
+                IOUtils.closeQuietly(request.body());
                 timer.shutdownNow();
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
