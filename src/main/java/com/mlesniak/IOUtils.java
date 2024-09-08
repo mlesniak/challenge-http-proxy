@@ -21,4 +21,13 @@ public class IOUtils {
         }
         is.close();
     }
+
+    public static void dump(InputStream is) throws IOException {
+        int b;
+        while ((b = is.read()) != -1) {
+            System.out.print((char)b);
+        }
+        is.close();
+    }
+
 }
