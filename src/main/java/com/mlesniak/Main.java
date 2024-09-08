@@ -14,6 +14,7 @@ public class Main {
 
         // curl --proxy-insecure --proxy "https://localhost:8989" "https://mlesniak.com"
         // keytool -genkeypair -alias proxy -keyalg RSA -keystore keystore.jks -keysize 2048
+        // keytool -list -v -keystore keystore.jks
         KeyStore ks = KeyStore.getInstance("JKS");
         ks.load(new FileInputStream("keystore.jks"), "password".toCharArray());
 
