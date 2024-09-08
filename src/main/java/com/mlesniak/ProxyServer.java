@@ -13,7 +13,11 @@ import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
+
+import static com.mlesniak.Events.Event.CLIENT_THREAD_STARTED;
+import static com.mlesniak.Events.Event.CLIENT_THREAD_STOPPED;
 
 public class ProxyServer {
     private static final Set<String> IGNORED_HEADERS = Set.of(
@@ -29,6 +33,8 @@ public class ProxyServer {
 
     // @mlesniak Use virtual threads.
     public void start() throws IOException {
+        registerThreadLogging();
+
         try (var socket = new ServerSocket(port)) {
             Log.info("Start to listen on port {}", port);
             var clientExecs = Executors.newFixedThreadPool(128);
@@ -36,6 +42,7 @@ public class ProxyServer {
                 try {
                     Socket client = socket.accept();
                     clientExecs.submit(() -> {
+                        Events.emit(CLIENT_THREAD_STARTED);
                         try {
                             // Unique client id -- using the first characters of an
                             // uuid is sufficient for our toy proxy and does not
@@ -46,6 +53,7 @@ public class ProxyServer {
                         } finally {
                             IOUtils.closeQuietly(client);
                             Log.clear();
+                            Events.emit(CLIENT_THREAD_STOPPED);
                         }
                     });
                 } catch (IOException e) {
@@ -54,6 +62,18 @@ public class ProxyServer {
             } while (run);
             clientExecs.shutdown();
         }
+    }
+
+    private void registerThreadLogging() {
+        var counter = new AtomicInteger();
+        Events.add(CLIENT_THREAD_STARTED, (_) -> {
+            var running = counter.incrementAndGet();
+            Log.info("Thread started: {}", running);
+        });
+        Events.add(CLIENT_THREAD_STOPPED, (_) -> {
+            var running = counter.decrementAndGet();
+            Log.info("Thread stopped: {}", running);
+        });
     }
 
     public void stop() {
