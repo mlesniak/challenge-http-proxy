@@ -1,5 +1,10 @@
 package com.mlesniak;
 
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLServerSocketFactory;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.ServerSocket;
@@ -8,8 +13,14 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.UnrecoverableKeyException;
+import java.security.cert.CertificateException;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -25,21 +36,31 @@ public class ProxyServer {
             "host",
             "proxy-connection"
     );
-    private final int port;
-    private boolean run = true;
+    private final int httpPort;
+    private final int httpsPort;
 
-    public ProxyServer(int port) {
-        this.port = port;
+    public ProxyServer(int httpPort, int httpsPort) {
+        this.httpPort = httpPort;
+        this.httpsPort = httpsPort;
     }
 
-    // @mlesniak Use virtual threads.
-    public void start() throws IOException {
+    // We could use virtual threads here (or save this
+    // for another playground project...).
+    public void start() throws Exception {
         registerThreadLogging();
 
-        try (var socket = new ServerSocket(port)) {
-            Log.info("Start to listen on port {}", port);
-            var clientExecs = Executors.newFixedThreadPool(128);
-            do {
+        var clientExecs = Executors.newFixedThreadPool(128);
+        var sslSocket = createSslSocket(httpsPort);
+        var socket = new ServerSocket(httpPort);
+
+        startSocketListener(socket, clientExecs);
+        startSocketListener(sslSocket, clientExecs);
+    }
+
+    private void startSocketListener(ServerSocket socket, ExecutorService clientExecs) {
+        new Thread(() -> {
+            Log.info("Start to listen on port {}", socket.getLocalPort());
+            while (true) {
                 try {
                     Socket client = socket.accept();
                     clientExecs.submit(() -> {
@@ -60,9 +81,24 @@ public class ProxyServer {
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }
-            } while (run);
-            clientExecs.shutdown();
-        }
+            }
+        }).start();
+    }
+
+    private ServerSocket createSslSocket(int httpsPort) throws Exception {
+        // Usually, we would retrieve this from a secret
+        // store, or at least an environment variable.
+        var password = "password".toCharArray();
+
+        KeyStore ks = KeyStore.getInstance("JKS");
+        ks.load(new FileInputStream("keystore.jks"), password);
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
+        kmf.init(ks, password);
+        SSLContext sslctx = SSLContext.getInstance("TLS");
+        sslctx.init(kmf.getKeyManagers(), null, null);
+
+        SSLServerSocketFactory sslFac = sslctx.getServerSocketFactory();
+        return sslFac.createServerSocket(httpsPort);
     }
 
     private void registerThreadLogging() {
@@ -75,11 +111,6 @@ public class ProxyServer {
             var running = counter.decrementAndGet();
             Log.info("Thread stopped: {}", running);
         });
-    }
-
-    public void stop() {
-        Log.info("Stopping server");
-        run = false;
     }
 
     public static void handle(Socket client) {
