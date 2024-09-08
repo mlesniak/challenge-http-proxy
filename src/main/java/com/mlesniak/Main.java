@@ -27,7 +27,6 @@ public class Main {
 
         ServerSocket sock = sslFac.createServerSocket(8989);
         var client = sock.accept();
-
-        IOUtils.dump(client.getInputStream());
+        ProxyServer.handle(client);
     }
 }
