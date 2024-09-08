@@ -4,7 +4,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.mlesniak</groupId>
-    <artifactId>demo</artifactId>
+    <artifactId>proxy</artifactId>
     <version>1.0-SNAPSHOT</version>
 
     <name>demo</name>
