@@ -1,6 +1,7 @@
 package com.mlesniak;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.http.HttpClient;
@@ -11,7 +12,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
 public class ProxyServer {
@@ -27,7 +28,6 @@ public class ProxyServer {
     }
 
     // @mlesniak Use virtual threads.
-    // @mlesniak still not clear, when a connection is finished and can be dropped.
     public void start() throws IOException {
         try (var socket = new ServerSocket(port)) {
             Log.info("Start to listen on port {}", port);
@@ -68,8 +68,8 @@ public class ProxyServer {
         try (var is = client.getInputStream(); var os = client.getOutputStream()) {
             Request request = Request.from(is, os);
             switch (request.type()) {
-                case HTTP -> handleUnencryptedRequest(clientIp, request);
-                case HTTPS -> handleTunnel(request);
+                case HTTP -> handleHttp(clientIp, request);
+                case HTTPS -> handleHttps(request);
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -78,7 +78,7 @@ public class ProxyServer {
         }
     }
 
-    private static void handleUnencryptedRequest(String clientIp, Request request) throws IOException {
+    private static void handleHttp(String clientIp, Request request) throws IOException {
         try (var client = HttpClient.newBuilder().build()) {
             var clientRequest = HttpRequest.newBuilder(request.target());
             // For the time being, we ignore multivalued headers, i.e. headers
@@ -104,7 +104,7 @@ public class ProxyServer {
         }
     }
 
-    private static void handleTunnel(Request request) throws IOException {
+    private static void handleHttps(Request request) throws IOException {
         Log.info("Request {}", request);
         // Create a bidirectional tunnel to the target and let the client handle everything else.
         var server = request.target().getScheme();
@@ -112,16 +112,19 @@ public class ProxyServer {
         var sock = new Socket(server, port);
 
         // Send back 200 to signal that a tunnel has been established.
-        request.response().write("HTTP/1.1 200 OK\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+        OutputStream response = request.response();
+        response.write("HTTP/1.1 200 OK\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
 
+        var dataSent = new AtomicBoolean(true);
         var receiver = new Thread(() -> {
             int b;
             try {
                 while ((b = sock.getInputStream().read()) != -1) {
+                    dataSent.set(true);
                     if (Thread.currentThread().isInterrupted()) {
                         break;
                     }
-                    request.response().write(b);
+                    response.write(b);
                 }
             } catch (IOException e) {
                 // This is ok-ish, sometimes the socket closes too fast.
@@ -144,7 +147,20 @@ public class ProxyServer {
         });
         sender.start();
 
+        var timer = Executors.newSingleThreadScheduledExecutor();
+        timer.scheduleAtFixedRate(() -> {
+            if (!dataSent.get()) {
+                Log.info("Stopping client");
+                sender.interrupt();
+                receiver.interrupt();
+                timer.close();
+            }
+            Log.info("Tick");
+            dataSent.set(false);
+        }, 5, 5, TimeUnit.SECONDS);
+
         Log.info("Finished HTTPS tunnel");
+        timer.close();
         try {
             sender.join();
         } catch (InterruptedException e) {
