@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -94,7 +95,7 @@ public class ProxyServer {
         } catch (IOException e) {
             throw new RuntimeException(e);
         } finally {
-            Log.info("Finished processing");
+            Log.info("Request processed");
         }
     }
 
@@ -126,65 +127,62 @@ public class ProxyServer {
 
     private static void handleHttps(Request request) throws IOException {
         Log.info("Request {}", request);
-        // Create a bidirectional tunnel to the target and let the client handle everything else.
         var server = request.target().getScheme();
         var port = Integer.parseInt(request.target().getSchemeSpecificPart());
-        var sock = new Socket(server, port);
+        try (var sock = new Socket(server, port)) {
+            var mdc = Log.get();
+            var keepAlive = new AtomicBoolean(true);
 
-        // Send back 200 to signal that a tunnel has been established.
-        OutputStream response = request.response();
-        response.write("HTTP/1.1 200 OK\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+            // Send back 200 to signal that a tunnel has been established.
+            OutputStream response = request.response();
+            response.write("HTTP/1.1 200 OK\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
 
-        var dataSent = new AtomicBoolean(true);
-        var receiver = new Thread(() -> {
-            int b;
-            try {
-                while ((b = sock.getInputStream().read()) != -1) {
-                    dataSent.set(true);
-                    if (Thread.currentThread().isInterrupted()) {
-                        break;
+            Thread receiver = new Thread(() -> {
+                Log.add(mdc);
+                try {
+                    int b;
+                    while ((b = sock.getInputStream().read()) != -1) {
+                        keepAlive.set(true);
+                        response.write(b);
                     }
-                    response.write(b);
+                } catch (IOException _) {
                 }
-            } catch (IOException e) {
-                // This is ok-ish, sometimes the socket closes too fast.
-                // While not perfect, good enough for now.
-            }
-        });
-        receiver.start();
+            });
 
-        var sender = new Thread(() -> {
-            int b;
+            Thread sender = new Thread(() -> {
+                Log.add(mdc);
+                try {
+                    int b;
+                    while ((b = request.body().read()) != -1) {
+                        sock.getOutputStream().write(b);
+                    }
+                } catch (IOException _) {
+                }
+            });
+
+            ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor();
+            timer.scheduleAtFixedRate(() -> {
+                Log.add(mdc);
+                if (!keepAlive.get()) {
+                    // By closing the socket and request input stream,
+                    // we unblock stuck read operations, and we can
+                    // continue.
+                    IOUtils.closeQuietly(sock);
+                    IOUtils.closeQuietly(request.body());
+                    timer.shutdownNow();
+                }
+                keepAlive.set(false);
+            }, 5, 5, TimeUnit.SECONDS);
+
+            receiver.start();
+            sender.start();
+
             try {
-                while ((b = request.body().read()) != -1) {
-                    sock.getOutputStream().write(b);
-                }
-                receiver.interrupt();
-            } catch (IOException e) {
-                // This is ok-ish, sometimes the socket closes too fast.
-                // While not perfect, good enough for now.
+                sender.join();
+                timer.shutdownNow();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
             }
-        });
-        sender.start();
-
-        var timer = Executors.newSingleThreadScheduledExecutor();
-        timer.scheduleAtFixedRate(() -> {
-            if (!dataSent.get()) {
-                Log.info("Stopping client");
-                sender.interrupt();
-                receiver.interrupt();
-                timer.close();
-            }
-            Log.info("Tick");
-            dataSent.set(false);
-        }, 5, 5, TimeUnit.SECONDS);
-
-        Log.info("Finished HTTPS tunnel");
-        timer.close();
-        try {
-            sender.join();
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
         }
     }
 }

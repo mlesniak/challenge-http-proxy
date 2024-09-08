@@ -23,11 +23,21 @@ public final class Log {
         mdc.get().put(key, value);
     }
 
+    public static Map<String, Object> get() {
+        return mdc.get();
+    }
+
     public static void clear() {
         mdc.get().clear();
     }
 
     private static String now() {
         return sdf.get().format(new Date());
+    }
+
+    public static void add(Map<String, Object> mdc) {
+        for (Map.Entry<String, Object> entry : mdc.entrySet()) {
+            add(entry.getKey(), entry.getValue().toString());
+        }
     }
 }
