@@ -2,7 +2,7 @@
 
 This is a simple http(s) proxy to learn how forward proxies work, 
 how communication with SSL is established and how to prove an SSL
-endpoint oneself.
+endpoint oneself. It is based on [John Crickets Coding Challenges](https://codingchallenges.substack.com/p/coding-challenge-51-http-forward).
 
 Everything is pure Java (which its batteries included), i.e. we
 do not use any external libraries. On a side note, this is an ongoing
