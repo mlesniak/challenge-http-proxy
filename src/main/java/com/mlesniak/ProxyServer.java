@@ -139,24 +139,30 @@ public class ProxyServer {
 
             Thread receiver = new Thread(() -> {
                 Log.add(mdc);
+                int count = 0;
                 try {
                     int b;
                     while ((b = sock.getInputStream().read()) != -1) {
+                        count++;
                         keepAlive.set(true);
                         response.write(b);
                     }
                 } catch (IOException _) {
+                    Log.info("Bytes received: " + count);
                 }
             });
 
             Thread sender = new Thread(() -> {
                 Log.add(mdc);
+                int count = 0;
                 try {
                     int b;
                     while ((b = request.body().read()) != -1) {
+                        count++;
                         sock.getOutputStream().write(b);
                     }
                 } catch (IOException _) {
+                    Log.info("Bytes sent: " + count);
                 }
             });
 
